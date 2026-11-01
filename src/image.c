@@ -17,7 +17,9 @@ void image_init(struct image* image) {
   image->y_offset = 0;
   image->padding_left = 0;
   image->padding_right = 0;
+  image->spacing = 0;
   image->link = NULL;
+  image->next = NULL;
 
   shadow_init(&image->shadow);
   color_init(&image->border_color, 0xcccccccc);
@@ -36,8 +38,62 @@ bool image_set_link(struct image* image, struct image* link) {
   return true;
 }
 
+static void image_destroy_chain(struct image* image) {
+  struct image* next = image->next;
+  image->next = NULL;
+  while (next) {
+    struct image* after = next->next;
+    next->next = NULL;
+    image_destroy(next);
+    free(next);
+    next = after;
+  }
+}
+
+// "a|b|c" loads a as this image and b, c as a chain of images drawn to its
+// right, separated by `spacing`. Like image_load, this takes ownership of
+// `path`.
+static bool image_load_multiple(struct image* image, char* path, FILE* rsp) {
+  char* paths = string_copy(path);
+  char* rest = paths;
+  char* first = strsep(&rest, "|");
+  // Drop the old first image, so a failing first part does not leave it shown.
+  image_set_image(image, NULL, CGRectNull, true);
+  image->size = CGSizeZero;
+  image->bounds.size = CGSizeZero;
+  bool loaded = *first && image_load(image, string_copy(first), rsp);
+
+  struct image* tail = image;
+  char* part;
+  while ((part = strsep(&rest, "|"))) {
+    if (!*part) continue;
+    struct image* next = malloc(sizeof(struct image));
+    image_init(next);
+    next->scale = image->scale;
+    if (image_load(next, string_copy(part), rsp) && next->image_ref) {
+      tail->next = next;
+      tail = next;
+      loaded = true;
+    } else {
+      image_destroy(next);
+      free(next);
+    }
+  }
+
+  if (image->path) free(image->path);
+  image->path = path;
+  if (!image->image_ref && image->next) {
+    // The first image failed: keep the chain, but draw it.
+    image->enabled = true;
+  }
+  free(paths);
+  return loaded;
+}
+
 bool image_load(struct image* image, char* path, FILE* rsp) {
   if (!path) return false;
+  image_destroy_chain(image);
+  if (strchr(path, '|')) return image_load_multiple(image, path, rsp);
   char* app = string_copy(path);
   if (image->path) free(image->path);
   image->path = string_copy(path);
@@ -182,6 +238,8 @@ bool image_set_scale(struct image* image, float scale) {
   image->bounds = (CGRect){{image->bounds.origin.x, image->bounds.origin.y},
                            {image->size.width * image->scale,
                             image->size.height * image->scale}};
+  for (struct image* next = image->next; next; next = next->next)
+    image_set_scale(next, scale);
   return true;
 }
 
@@ -217,6 +275,13 @@ bool image_set_padding_right(struct image* image, int padding_right) {
   return true;
 }
 
+bool image_set_spacing(struct image* image, int spacing) {
+  if (image->spacing == spacing) return false;
+
+  image->spacing = spacing;
+  return true;
+}
+
 bool image_set_yoffset(struct image* image, int yoffset) {
   if (image->y_offset == yoffset) return false;
 
@@ -225,12 +290,21 @@ bool image_set_yoffset(struct image* image, int yoffset) {
 }
 
 CGSize image_get_size(struct image* image) {
-  return (CGSize){ .width = image->bounds.size.width
+  float width = image->bounds.size.width;
+  float height = image->bounds.size.height;
+  if (!image->image_ref && !image->link) width = 0;
+  for (struct image* next = image->next; next; next = next->next) {
+    if (width > 0) width += image->spacing;
+    width += next->bounds.size.width;
+    if (next->bounds.size.height > height) height = next->bounds.size.height;
+  }
+
+  return (CGSize){ .width = width
                             + image->padding_left
                             + image->padding_right
                             + (image->shadow.enabled
                                ? image->shadow.offset.x : 0),
-                   .height = image->bounds.size.height
+                   .height = height
                              + 2*abs(image->y_offset) };
 }
 
@@ -249,9 +323,32 @@ void image_calculate_bounds(struct image* image, uint32_t x, uint32_t y) {
 
   image->bounds.origin.x = x + image->padding_left;
   image->bounds.origin.y = y - image->bounds.size.height / 2 + image->y_offset;
+
+  // Chained images share the look of the first one and sit to its right,
+  // vertically centred on the same line.
+  float cursor = image->bounds.origin.x;
+  if (image->image_ref || image->link)
+    cursor += image->bounds.size.width + image->spacing;
+  for (struct image* next = image->next; next; next = next->next) {
+    next->corner_radius = image->corner_radius;
+    next->border_width = image->border_width;
+    next->border_color = image->border_color;
+    next->shadow = image->shadow;
+    next->bounds.origin.x = cursor;
+    next->bounds.origin.y = y - next->bounds.size.height / 2 + image->y_offset;
+    cursor += next->bounds.size.width + image->spacing;
+  }
 }
 
+static void image_draw_single(struct image* image, CGContextRef context);
+
 void image_draw(struct image* image, CGContextRef context) {
+  image_draw_single(image, context);
+  for (struct image* next = image->next; next; next = next->next)
+    image_draw_single(next, context);
+}
+
+static void image_draw_single(struct image* image, CGContextRef context) {
   if ((!image->link && !image->image_ref)
       || (image->link && !image->link->image_ref)) return;
 
@@ -332,9 +429,11 @@ void image_clear_pointers(struct image* image) {
   image->image_ref = NULL;
   image->data_ref = NULL;
   image->path = NULL;
+  image->next = NULL;
 }
 
 void image_destroy(struct image* image) {
+  image_destroy_chain(image);
   CGImageRelease(image->image_ref);
   if (image->data_ref) CFRelease(image->data_ref);
   if (image->path) free(image->path);
@@ -382,6 +481,12 @@ bool image_parse_sub_domain(struct image* image, FILE* rsp, struct token propert
     ANIMATE(image_set_padding_right,
             image,
             image->padding_right,
+            token_to_int(get_token(&message)));
+  }
+  else if (token_equals(property, PROPERTY_SPACING)) {
+    ANIMATE(image_set_spacing,
+            image,
+            image->spacing,
             token_to_int(get_token(&message)));
   }
   else if (token_equals(property, PROPERTY_YOFFSET)) {

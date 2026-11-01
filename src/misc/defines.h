@@ -94,6 +94,7 @@
 #define PROPERTY_ICON                          "icon"
 #define PROPERTY_XOFFSET                       "x_offset"
 #define PROPERTY_YOFFSET                       "y_offset"
+#define PROPERTY_SPACING                       "spacing"
 #define PROPERTY_WIDTH                         "width"
 #define PROPERTY_LABEL                         "label"
 #define PROPERTY_CACHE_SCRIPTS                 "cache_scripts"

@@ -25,8 +25,12 @@ struct image {
   int padding_left;
   int padding_right;
   int y_offset;
+  int spacing;
 
   struct image* link;
+
+  // Further images drawn to the right of this one ("a|b|c" image strings).
+  struct image* next;
 };
 
 void image_init(struct image* image);
