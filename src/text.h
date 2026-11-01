@@ -9,6 +9,8 @@ struct text_line {
   CGFloat descent;
 };
 
+#define TEXT_MAX_TABS 8
+
 struct text {
   bool highlight;
   bool drawing;
@@ -25,6 +27,12 @@ struct text {
   uint32_t scroll_duration;
   float scroll;
   float width;
+
+  // Tab stops for "\t" in the string: position in points from the start of
+  // the text and alignment ('l', 'r' or 'c') of the column at that stop.
+  uint32_t num_tabs;
+  float tab_positions[TEXT_MAX_TABS];
+  char tab_aligns[TEXT_MAX_TABS];
 
   CGRect bounds;
 

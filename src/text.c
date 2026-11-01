@@ -39,21 +39,53 @@ static void text_calculate_truncated_width(struct text* text, CFDictionaryRef at
   }
 }
 
+static CTParagraphStyleRef text_create_paragraph_style(struct text* text) {
+  if (text->num_tabs == 0) return NULL;
+
+  CTTextTabRef tabs[TEXT_MAX_TABS];
+  for (uint32_t i = 0; i < text->num_tabs; i++) {
+    CTTextAlignment alignment = kCTTextAlignmentLeft;
+    if (text->tab_aligns[i] == 'r') alignment = kCTTextAlignmentRight;
+    else if (text->tab_aligns[i] == 'c') alignment = kCTTextAlignmentCenter;
+    tabs[i] = CTTextTabCreate(alignment, text->tab_positions[i], NULL);
+  }
+
+  CFArrayRef tab_array = CFArrayCreate(NULL,
+                                       (const void**)tabs,
+                                       text->num_tabs,
+                                       &kCFTypeArrayCallBacks);
+  for (uint32_t i = 0; i < text->num_tabs; i++) CFRelease(tabs[i]);
+
+  CTParagraphStyleSetting setting = { kCTParagraphStyleSpecifierTabStops,
+                                      sizeof(CFArrayRef),
+                                      &tab_array                         };
+  CTParagraphStyleRef style = CTParagraphStyleCreate(&setting, 1);
+  CFRelease(tab_array);
+  return style;
+}
+
 static void text_prepare_line(struct text* text) {
   const void *keys[] = { kCTFontAttributeName,
-                         kCTForegroundColorFromContextAttributeName };
+                         kCTForegroundColorFromContextAttributeName,
+                         kCTParagraphStyleAttributeName };
 
   if (text->font.font_changed) {
     font_create_ctfont(&text->font);
     text->font.font_changed = false;
   }
-  const void *values[] = { text->font.ct_font, kCFBooleanTrue };
+  CTParagraphStyleRef paragraph_style = text_create_paragraph_style(text);
+  const void *values[] = { text->font.ct_font,
+                           kCFBooleanTrue,
+                           paragraph_style      };
   CFDictionaryRef attributes = CFDictionaryCreate(NULL,
                                                   keys,
                                                   values,
-                                                  array_count(keys),
+                                                  paragraph_style
+                                                  ? array_count(keys)
+                                                  : array_count(keys) - 1,
                                                   &kCFTypeDictionaryKeyCallBacks,
                                                   &kCFTypeDictionaryValueCallBacks);
+  if (paragraph_style) CFRelease(paragraph_style);
 
   CFStringRef string = CFStringCreateWithCString(NULL,
                                                  text->string,
@@ -111,6 +143,42 @@ bool text_set_max_chars(struct text* text, uint32_t max_chars) {
   return strlen(text->string) > text->max_chars;
 }
 
+// "150,240r,300c": one stop per comma-separated position in points, with an
+// optional alignment suffix (l = left, the default, r = right, c = centre).
+// An empty string removes all stops.
+static bool text_set_tabs(struct text* text, char* tabs) {
+  uint32_t num_tabs = 0;
+  float positions[TEXT_MAX_TABS];
+  char aligns[TEXT_MAX_TABS];
+
+  char* cursor = tabs;
+  while (cursor && *cursor && num_tabs < TEXT_MAX_TABS) {
+    char* end = NULL;
+    float position = strtof(cursor, &end);
+    if (end == cursor) break;
+    char align = 'l';
+    if (*end == 'r' || *end == 'c' || *end == 'l') align = *end++;
+    positions[num_tabs] = position;
+    aligns[num_tabs] = align;
+    num_tabs++;
+    while (*end == ',' || *end == ' ') end++;
+    cursor = end;
+  }
+
+  bool changed = num_tabs != text->num_tabs;
+  for (uint32_t i = 0; !changed && i < num_tabs; i++) {
+    changed = positions[i] != text->tab_positions[i]
+              || aligns[i] != text->tab_aligns[i];
+  }
+  if (!changed) return false;
+
+  text->num_tabs = num_tabs;
+  memcpy(text->tab_positions, positions, sizeof(float) * num_tabs);
+  memcpy(text->tab_aligns, aligns, num_tabs);
+  if (text->string) text_set_string(text, text->string, true);
+  return true;
+}
+
 bool text_set_string(struct text* text, char* string, bool forced) {
   if (!string) return false;
   if (!forced && text->string && strcmp(text->string, string) == 0) { 
@@ -146,6 +214,7 @@ void text_init(struct text* text) {
   text->padding_right = 0;
   text->y_offset = 0;
   text->max_chars = 0;
+  text->num_tabs = 0;
   text->align = POSITION_LEFT;
   text->scroll = 0.f;
   text->scroll_duration = 100;
@@ -557,6 +626,11 @@ bool text_parse_sub_domain(struct text* text, FILE* rsp, struct token property, 
     return changed;
   } else if (token_equals(property, PROPERTY_MAX_CHARS)) {
     return text_set_max_chars(text, token_to_int(get_token(&message)));
+  } else if (token_equals(property, PROPERTY_TABS)) {
+    char* tabs = token_to_string(get_token(&message));
+    bool changed = text_set_tabs(text, tabs);
+    free(tabs);
+    return changed;
   }
   else {
     struct key_value_pair key_value_pair = get_key_value_pair(property.text,
