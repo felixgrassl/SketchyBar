@@ -87,6 +87,11 @@ static void event_mouse_up(void* context) {
 
   struct bar* bar = bar_manager_get_bar_by_wid(&g_bar_manager, wid);
   struct popup* popup = bar_manager_get_popup_by_wid(&g_bar_manager, wid);
+  // A click on the bar window itself (a gap between items) makes the window
+  // server raise it above the item windows, dimming them behind the bar
+  // background. Restore the item windows on top.
+  if (bar) bar_order_item_windows(bar);
+
   if (!bar_item && !popup && !bar) return;
 
   CGPoint point_in_window_coords = CGPointZero;
