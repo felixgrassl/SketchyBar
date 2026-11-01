@@ -10,6 +10,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Sign with a real certificate, not ad hoc. An ad hoc signature changes on
+# every build, so macOS forgets the Accessibility permission each time.
+SIGN_IDENTITY="${SIGN_IDENTITY:-2BEAB39BACC99D672B01C65DDDC3C4DA71A11A23}"  # Apple Development: Felix Grassl
+
 git fetch -q upstream --tags
 target="${1:-$(git tag --sort=-v:refname | grep -E '^v[0-9.]+$' | head -1)}"
 
@@ -27,7 +31,7 @@ make arm64 >/dev/null
 bin="$(realpath "$(brew --prefix sketchybar)/bin/sketchybar")"
 chmod u+w "$bin"
 cp bin/sketchybar "$bin"
-codesign -fs - "$bin"
+codesign -f -s "$SIGN_IDENTITY" -i com.felixkratz.sketchybar "$bin"
 chmod a-w "$bin"
 brew services restart sketchybar
 
