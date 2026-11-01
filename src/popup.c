@@ -338,7 +338,11 @@ static void popup_release_item_windows(struct popup* popup) {
     if (bar_item->mouse_over) bar_item_mouse_exited(bar_item);
     for (uint32_t adid = 1; adid <= bar_item->num_windows; adid++)
       bar_item_remove_window(bar_item, adid);
+    // New windows start empty: draw the item again on the next open, even
+    // when its content did not change.
+    bar_item->needs_update = true;
   }
+  popup->needs_ordering = true;
 }
 
 bool popup_set_drawing(struct popup* popup, bool drawing) {
