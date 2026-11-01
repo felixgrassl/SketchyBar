@@ -25,7 +25,7 @@ void window_init(struct window* window) {
 }
 
 static CFTypeRef window_create_region(struct window* window, CGRect frame) {
-  CFTypeRef frame_region;
+  CFTypeRef frame_region = NULL;
   CGSNewRegionWithRect(&frame, &frame_region);
   return frame_region;
 }
@@ -73,8 +73,8 @@ void window_open(struct window* window, CGRect frame) {
                                         64,
                                         &id,
                                         NULL                    );
-  CFRelease(empty_region);
-  CFRelease(frame_region);
+  if (empty_region) CFRelease(empty_region);
+  if (frame_region) CFRelease(frame_region);
 
   window->id = id;
 
@@ -250,7 +250,7 @@ bool window_apply_frame(struct window* window, bool forced) {
     }
 
     surface_resize(window->surface, window);
-    CFRelease(frame_region);
+    if (frame_region) CFRelease(frame_region);
 
     window->needs_move = false;
     window->needs_resize = false;
