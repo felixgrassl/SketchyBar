@@ -327,9 +327,26 @@ void popup_clear_pointers(struct popup* popup) {
   window_clear(&popup->window);
 }
 
+// Every popup item owns one window per display, each with its own drawing
+// buffers (about 1 MB per row). Release them while the popup is closed; they
+// are created again on the next open.
+static void popup_release_item_windows(struct popup* popup) {
+  if (popup == &g_bar_manager.default_item.popup) return;
+  for (int i = 0; i < popup->num_items; i++) {
+    struct bar_item* bar_item = popup->items[i];
+    if (bar_item->popup.drawing) continue;
+    if (bar_item->mouse_over) bar_item_mouse_exited(bar_item);
+    for (uint32_t adid = 1; adid <= bar_item->num_windows; adid++)
+      bar_item_remove_window(bar_item, adid);
+  }
+}
+
 bool popup_set_drawing(struct popup* popup, bool drawing) {
   if (popup->drawing == drawing) return false;
-  if (!drawing) popup_close_window(popup);
+  if (!drawing) {
+    popup_close_window(popup);
+    popup_release_item_windows(popup);
+  }
   popup->drawing = drawing;
   popup->adid = 0;
   return true;
